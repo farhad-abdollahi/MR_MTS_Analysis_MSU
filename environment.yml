@@ -1,4 +1,4 @@
-name: ClimateChange_Proposal
+name: MR_MTS
 channels:
   - conda-forge
   - defaults
