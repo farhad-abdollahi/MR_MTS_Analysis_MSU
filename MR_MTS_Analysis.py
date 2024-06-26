@@ -7,6 +7,7 @@
 
 # Importing the required libraries.
 import os
+import json
 import pickle
 import openpyxl
 import numpy as np
@@ -50,7 +51,9 @@ def main():
             if i == 20:
                 break
     for i in range(1, len(cont)):
-        if (cont[i] == '\n' and cont[i-1] == '\n') or (cont[i] == '""\n' and cont[i-1] == '""\n'):
+        if (cont[i] == '\n' and cont[i-1] == '\n') or \
+                (cont[i].replace('"', '') == '\n' and cont[i-1].replace('"', '') == '\n') or \
+                (cont[i].replace(',', '') == '\n' and cont[i-1].replace(',', '') == '\n'):
             Columnline  = cont[i+1].replace('\n', '')       # Get the column names.
             dataline    = cont[-1].replace('\n', '')        # Get a data line.
             SkipRows    = i + 3                             # Number of rows to skip.
@@ -90,7 +93,10 @@ def main():
     else:
         CycleInfo = Calc_Cycle_Info(data)
     # Calculate the MR at different sequences.
-    CycleInfo, SeqInfo = Calc_MR(CycleInfo)
+    CycleInfo, SeqInfo, Diameter, Height = Calc_MR(CycleInfo)
+
+    # Evaluate the PD.
+    PDResult = Calc_PD(CycleInfo, SeqInfo, Height, InputFile)
 
     # Export the data in a form of an excel file.
     ExportData2Excel(InputFile, CycleInfo, SeqInfo)
@@ -126,7 +132,8 @@ def Calc_Cycle_Info(data):
         'AvgForceNoise_kN': [],
         'AvgForceNoise_%': [],
         'PeakForceDiff_kN': [],
-        'PeakForceDiff_%' : []
+        'PeakForceDiff_%' : [],
+        'RestDisp'        : []
     }
 
     # Now, iterate on these cycles to find the loading patterns.
@@ -161,6 +168,7 @@ def Calc_Cycle_Info(data):
             Duration  = EndTime - StartTime
             ForceRange= Force.max() - Force.min()
             DispRange = Disp.max() - Disp.min()
+            RestDisp  = data[data['Cycle'] == Cycles[MTScyc+2]]['Disp'].mean()
             # Check for the end of the sequence.
             if SeqCycleCounter < 90:        # at least 100 cycles is expected. For less than 90, just assume the same.
                 SeqForceRangeAvg = ((SeqForceRangeAvg * SeqCycleCounter) + ForceRange) / (SeqCycleCounter + 1)
@@ -189,6 +197,7 @@ def Calc_Cycle_Info(data):
             Res['AvgForceNoise_%'].append(None)
             Res['PeakForceDiff_kN'].append(None)
             Res['PeakForceDiff_%'].append(None)
+            Res['RestDisp'].append(RestDisp)
             # Update the indices and parameters.
             MTScyc += 3         # Updating the index of MTS cycle counter.
             ActualCycle += 1    # Updating the actual cycle number.
@@ -260,7 +269,8 @@ def Calc_Cycle_Info_Command(data):
         'AvgForceNoise_kN': [],
         'AvgForceNoise_%' : [],
         'PeakForceDiff_kN': [],
-        'PeakForceDiff_%' : []
+        'PeakForceDiff_%' : [],
+        'RestDisp'        : []
     }
 
     # Now, iterate on these cycles to find the loading patterns.
@@ -302,6 +312,7 @@ def Calc_Cycle_Info_Command(data):
             AvgForceNoisep  = AvgForceNoise / CommandRange * 100
             PeakForceDiff   = np.abs(CommandRange - ForceRange)
             PeakForceDiffp  = PeakForceDiff / CommandRange * 100
+            RestDisp        = data[data['Cycle'] == Cycles[MTScyc+2]]['Disp'].mean()
             # Check for the end of the sequence.
             if SeqCycleCounter < 90:        # at least 100 cycles is expected. For less than 90, just assume the same.
                 SeqForceRangeAvg = ((SeqForceRangeAvg * SeqCycleCounter) + ForceRange) / (SeqCycleCounter + 1)
@@ -330,6 +341,7 @@ def Calc_Cycle_Info_Command(data):
             Res['AvgForceNoise_%'].append(AvgForceNoisep)
             Res['PeakForceDiff_kN'].append(PeakForceDiff)
             Res['PeakForceDiff_%'].append(PeakForceDiffp)
+            Res['RestDisp'].append(RestDisp)
             # Update the indices and parameters.
             MTScyc += 3         # Updating the index of MTS cycle counter.
             ActualCycle += 1    # Updating the actual cycle number.
@@ -396,10 +408,10 @@ def Calc_MR(CycleInfo):
         TempDF = CycleInfo[CycleInfo['SequenceNum'] == sq]
         # Now, save the results.
         Res['Sequence Number'].append(sq)
-        Res['Deviator Stress (kPa)'].append(TempDF['Stress_kPa'][-5:].mean())
-        Res['Strain'].append(TempDF['Strain'][-5:].mean())
-        Res['MR (MPa)'].append(TempDF['MR_MPa'][-5:].mean())
-        Res['MR (psi)'].append(TempDF['MR_psi'][-5:].mean())
+        Res['Deviator Stress (kPa)'].append(TempDF['Stress_kPa'].to_numpy()[-5:].mean())
+        Res['Strain'].append(TempDF['Strain'].to_numpy()[-5:].mean())
+        Res['MR (MPa)'].append(TempDF['MR_MPa'].to_numpy()[-5:].mean())
+        Res['MR (psi)'].append(TempDF['MR_psi'].to_numpy()[-5:].mean())
         Res['Num Cycles'].append(len(TempDF))
 
     # Generate a dataframe from the results.
@@ -416,7 +428,7 @@ def Calc_MR(CycleInfo):
     print('\n')
 
     # Return the dataframe.
-    return CycleInfo, SeqInfo
+    return CycleInfo, SeqInfo, Diameter, Height
 # ======================================================================================================================
 # ======================================================================================================================
 # ======================================================================================================================
@@ -446,6 +458,103 @@ def GetInputFromUser():
 
     # Return the values.
     return Diameter, Height
+# ======================================================================================================================
+# ======================================================================================================================
+# ======================================================================================================================
+
+
+def GetStressStateFromUser():
+    """
+    This function is only to get some stress state inputs from the user.
+    :return:
+    """
+    # Define a function to check if the entered value is float.
+    def CheckInputValue(value, InvalidTitle):
+        while True:
+            try:
+                value = float(value)
+                return value
+            except:
+                value = input(InvalidTitle)
+
+    # Get the inputs from the user.
+    cyclicStrs  = input('Please enter the deviatoric (cyclic) stress during the PD test (psi):')
+    cyclicStrs  = CheckInputValue(cyclicStrs, 'You should enter a valid float number. ' 
+                                              'Please enter the deviatoric (cyclic) stress during PD test again (psi):')
+    Confine     = input('Please enter the confining pressure during the PD test (psi):')
+    Confine     = CheckInputValue(Confine, 'You should enter a valid float number. ' 
+                                           'Please enter the confining pressure during PD test again (psi):')
+    Atmospheric = input('Please enter the atmospheric pressure during the PD test (psi), [e.g. 14.6 psi]:')
+    Atmospheric = CheckInputValue(Atmospheric, 'You should enter a valid float number. ' 
+                                               'Please enter the atmospheric pressure during the PD test (psi), '
+                                               '[e.g. 14.6 psi]:')
+
+    # Return the values.
+    return cyclicStrs, Confine, Atmospheric
+# ======================================================================================================================
+# ======================================================================================================================
+# ======================================================================================================================
+
+
+def Calc_PD(CycleInfo, SeqInfo, Height, InputFile):
+    """
+    This function analyze the permanent deformation test results and return the plastic strain growth with the loading
+        cycles as well as the stress state during the PD test.
+    :param CycleInfo: A DataFrame of all loading cycle responses.
+    :param SeqInfo: A DataFrame of sequence informations to find the PD sequence.
+    :param Height: The height of the sample to calculate the plastic strain.
+    :param InputFile: Path to the input file name for saving the PD results in the same directory.
+    :return: A dictionary of all results.
+    """
+    # Check if there is a PD sequence in the result: PD sequences are usually consists of about 10,000 loading cycles.
+    #   However, as the test might encounter failure sooner, we recognize the PD sequence as a seq with at least 600
+    #   loading cycles.
+    Indx = np.where(SeqInfo['Num Cycles'].to_numpy() > 600)[0]
+    if len(Indx) == 0:
+        print(f'* Permanent Deformation loading cycles were not found!')
+        return
+
+    # Otherwise, calculate the plastic strain growth with cycle.
+    PDsq = SeqInfo.loc[Indx[0], 'Sequence Number']
+    Cycles = CycleInfo[CycleInfo['SequenceNum'] == PDsq].copy()
+    Cycles.reset_index(inplace=True)
+    Cycles['PlasticDisp'] = (Cycles['RestDisp'] - float(Cycles.loc[0, 'RestDisp'])) * -1
+    Cycles['PlasticStrain'] = Cycles['PlasticDisp'] / Height
+    CycleNum = Cycles['ActualCycle'].to_numpy()
+    PlasticStrn = Cycles['PlasticStrain'].to_numpy()
+    print(f'* Permanent Deformation loading cycles were found!')
+    print(f'   ** there are {len(CycleNum)} loading cycles under sequence number {PDsq}')
+
+    # Get the stress state properties.
+    DeviatoricStrs, ConfineStrs, AtmStrs = GetStressStateFromUser()
+
+    # Now fit a model to the results.
+    # First, Thompson & Neumann (1993): log ep = a + b * log N
+    FitCoeff = np.polyfit(np.log10(CycleNum[1:]), np.log10(PlasticStrn[1:]), 1)
+    b, a = FitCoeff
+    print(f'   ** First, Thompson and Neumann (1993) model: (log εp = a + b * log N)')
+    print(f'\t\ta = {a:.6e}\n\t\tb = {b:.6e}')
+    # Next, Ullditz equation:
+    #
+    # print(f'   ** Next, Ullditz (1993) model: (εp = A * (N ^ α) * [σz / σatm] ^ β)')
+    # print(f'\t\tA = {A:.6e}\n\t\tα = {b:.6e}\n\t\tβ = {b:.6e}')
+
+    # Aggregate the results in a dictionary.
+    Result = {
+        'CycleNum': CycleNum.tolist(),
+        'PlasticStrn': PlasticStrn.tolist(),
+        'AtmStrs': AtmStrs,
+        'DeviatoricStrs': DeviatoricStrs,
+        'ConfineStrs': ConfineStrs
+    }
+
+    # Save that dictionary along with the file.
+    PDFileName = os.path.join(os.path.dirname(InputFile),
+                              os.path.splitext(os.path.basename(InputFile))[0] + '-PD-Output.json')
+    json.dump(Result, open(PDFileName, 'w'))
+
+    # Return the PD results.
+    return Result
 # ======================================================================================================================
 # ======================================================================================================================
 # ======================================================================================================================
