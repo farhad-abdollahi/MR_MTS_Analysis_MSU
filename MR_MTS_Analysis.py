@@ -29,7 +29,7 @@ def main():
     print(f'============ Software for analyzing the MR test results from MTS device in EB ===============')
     print(f'=== Developed by Farhad Abdollahi (abdolla4@msu.edu) and Tanzila Islam (islamta1@msu.edu) ===')
     print(f'=== under supervision of Prof. Kutay (kutay@msu.edu).                                     ===')
-    print(f'=== Latest update at: 11/15/2023 (05/08/2024)                                             ===')
+    print(f'=== Latest update at: 11/15/2023 (05/08/2024) (08/01/2024)                                ===')
     print(f'=============================================================================================')
     print(f'=============================================================================================\n')
 
@@ -99,7 +99,10 @@ def main():
     PDResult = Calc_PD(CycleInfo, SeqInfo, Height, InputFile)
 
     # Export the data in a form of an excel file.
-    ExportData2Excel(InputFile, CycleInfo, SeqInfo)
+    if PDResult == None:
+        ExportData2Excel(InputFile, CycleInfo, SeqInfo)
+    else:
+        ExportData2Excel_PD(InputFile, CycleInfo, SeqInfo, PDResult)
 
     # Return Nothing.
     return
@@ -545,7 +548,10 @@ def Calc_PD(CycleInfo, SeqInfo, Height, InputFile):
         'PlasticStrn': PlasticStrn.tolist(),
         'AtmStrs': AtmStrs,
         'DeviatoricStrs': DeviatoricStrs,
-        'ConfineStrs': ConfineStrs
+        'ConfineStrs': ConfineStrs,
+        'FitCoeff': {
+            'Thompson&Neumann': [a, b]
+        }
     }
 
     # Save that dictionary along with the file.
@@ -612,6 +618,120 @@ def ExportData2Excel(InputFile, CycleInfo, SeqInfo):
         SeqInfo_US.to_excel(writer, sheet_name='Seq_Info_US', index=False)
         SeqInfo_SI.to_excel(writer, sheet_name='Seq_Info_SI', index=False)
         CycleInfo.to_excel(writer, sheet_name='Cycle_Info', index=False)
+
+    # Now, modifying the sequence information sheets and provide the formulas in the cells.
+    Workbook = openpyxl.load_workbook(ExcelFileName)            # Read the excel file with OpenPyXL module.
+    SheetUS  = Workbook['Seq_Info_US']                          # Read the US sheet.
+    SheetSI  = Workbook['Seq_Info_SI']                          # Read the US sheet.
+
+    # Add a formula to the Cells.
+    for i in range(len(SeqInfo_US)):
+        SheetUS[f'H{2 + i}'] = f'=G{2 + i}'                     # Fixing the σ3.
+        SheetSI[f'H{2 + i}'] = f'=G{2 + i}'
+        SheetUS[f'I{2 + i}'] = f'=H{2 + i} + E{2 + i}'          # Fixing the σ1.
+        SheetSI[f'I{2 + i}'] = f'=H{2 + i} + E{2 + i}'
+        SheetUS[f'J{2 + i}'] = f'=1/3*SQRT((I{2 + i}-H{2 + i})^2+(I{2 + i}-H{2 + i})^2)'    # Fixing τoct.
+        SheetSI[f'J{2 + i}'] = f'=1/3*SQRT((I{2 + i}-H{2 + i})^2+(I{2 + i}-H{2 + i})^2)'
+        SheetUS[f'K{2 + i}'] = f'=I{2 + i}+H{2 + i}*2'          # Fixing the bulk stress.
+        SheetSI[f'K{2 + i}'] = f'=I{2 + i}+H{2 + i}*2'
+        SheetUS[f'L{2 + i}'] = f'=K{2 + i} / F{2 + i}'          # Fixing the bulk/Pa ratio.
+        SheetSI[f'L{2 + i}'] = f'=K{2 + i} / F{2 + i}'
+        SheetUS[f'M{2 + i}'] = f'=J{2 + i} / F{2 + i} + 1'      # Fixing the τoct/Pa+1 ratio.
+        SheetSI[f'M{2 + i}'] = f'=J{2 + i} / F{2 + i} + 1'
+        SheetUS[f'N{2 + i}'] = f'=($T$4*F{2 + i}*L{2 + i}^$T$5*M{2 + i}^$T$6)'      # Fixing the predicted MR (psi).
+        SheetSI[f'N{2 + i}'] = f'=($T$4*F{2 + i}*L{2 + i}^$T$5*M{2 + i}^$T$6)/1000' # MR in MPa
+        SheetUS[f'O{2 + i}'] = f'=ABS(N{2 + i} - C{2 + i})'     # Fixing the MR MAE.
+        SheetSI[f'O{2 + i}'] = f'=ABS(N{2 + i} - C{2 + i})'
+        SheetUS['T7'] = f'=RSQ((N3:N17),(C3:C17))'              # Fixing the R-square values.
+        SheetSI['T7'] = f'=RSQ((N3:N17),(C3:C17))'
+
+    # Add the k values.
+    k1_US, k2_US, k3_US, k1_SI, k2_SI, k3_SI = Calc_kvalues(SeqInfo_US.copy(), SeqInfo_SI.copy())
+    SheetUS['T4'] = f'{k1_US}'
+    SheetUS['T5'] = f'{k2_US}'
+    SheetUS['T6'] = f'{k3_US}'
+    SheetSI['T4'] = f'{k1_SI}'
+    SheetSI['T5'] = f'{k2_SI}'
+    SheetSI['T6'] = f'{k3_SI}'
+    SheetUS['S4'] = 'k1'
+    SheetUS['S5'] = 'k2'
+    SheetUS['S6'] = 'k3'
+    SheetUS['S7'] = 'R2'
+    SheetSI['S4'] = 'k1'
+    SheetSI['S5'] = 'k2'
+    SheetSI['S6'] = 'k3'
+    SheetSI['S7'] = 'R2'
+    SheetUS['S10'] = 'Please re-calibrate using the Excel Solver or fix the solver part of the code!'
+    SheetSI['S10'] = 'Please re-calibrate using the Excel Solver or fix the solver part of the code!'
+
+    # Overwrote the workbook
+    Workbook.save(ExcelFileName)
+    print(f'* Results has been saved to an Excel sheet next to the input CSV file: {ExcelFileName}')
+
+    # Return Nothing.
+    return
+# ======================================================================================================================
+# ======================================================================================================================
+# ======================================================================================================================
+
+
+def ExportData2Excel_PD(InputFile, CycleInfo, SeqInfo, PDResults):
+    """
+    This function exports the data in a form of an excel file.
+    :param InputFile: The path to the input CSV file.
+    :return: Nothing.
+    """
+    # Create the path for writing the Excel file.
+    ExcelFileName   = os.path.join(os.path.dirname(InputFile),
+                                   os.path.splitext(os.path.basename(InputFile))[0] + '-PD-Output.xlsx')
+
+    # And now, write the sequence information in another sheet within that excel file.
+    SeqInfo_SI = SeqInfo.copy()
+    SeqInfo_US = SeqInfo.copy()
+    SeqInfo_US['Deviator Stress (psi)'] = SeqInfo_US['Deviator Stress (kPa)'] * 0.145038
+    SeqInfo_US.drop('Deviator Stress (kPa)', axis=1, inplace=True)
+    SeqInfo_US.drop('MR (MPa)', axis=1, inplace=True)
+    SeqInfo_SI.drop('MR (psi)', axis=1, inplace=True)
+    # First add some more rows to the SeqInfo dataframe.
+    SeqInfo_SI['Air Pressure (kPa)'] = 102.201  # Use the value for Lansing, MI in Nov 15, 2023
+    SeqInfo_US['Air Pressure (psi)'] = SeqInfo_SI['Air Pressure (kPa)'] * 0.145038
+    try:
+        Confine_AASHTOt307_psi = [15, PDResults['ConfineStrs']]
+        if len(SeqInfo_US) <= len(Confine_AASHTOt307_psi):
+            SeqInfo_US['Confine Pressure (psi)'] = Confine_AASHTOt307_psi[:len(SeqInfo_US)]
+        else:
+            SeqInfo_US['Confine Pressure (psi)'] = Confine_AASHTOt307_psi + \
+                                                   [0 for i in range(len(SeqInfo_US) - len(Confine_AASHTOt307_psi))]
+    except:
+        SeqInfo_US['Confine Pressure (psi)'] = 0
+    SeqInfo_SI['Confine Pressure (kPa)'] = SeqInfo_US['Confine Pressure (psi)'] / 0.145038
+    SeqInfo_US['σ3 (psi)'] = 0
+    SeqInfo_SI['σ3 (kPa)'] = 0
+    SeqInfo_US['σ1 (psi)'] = 0
+    SeqInfo_SI['σ1 (kPa)'] = 0
+    SeqInfo_US['τoct (psi)'] = 0
+    SeqInfo_SI['τoct (kPa)'] = 0
+    SeqInfo_US['Bulk (psi)'] = 0
+    SeqInfo_SI['Bulk (kPa)'] = 0
+    SeqInfo_US['Bulk/Pa'] = 0
+    SeqInfo_SI['Bulk/Pa'] = 0
+    SeqInfo_US['τoct/Pa+1'] = 0
+    SeqInfo_SI['τoct/Pa+1'] = 0
+    SeqInfo_US['Predict MR (psi)'] = 0
+    SeqInfo_SI['Predict MR (MPa)'] = 0
+    SeqInfo_US['MR MAE (psi)'] = 0
+    SeqInfo_SI['MR MAE (MPa)'] = 0
+
+    # Create a new DataFrame for the plastic strains.
+    PlasticStrn = pd.DataFrame({'Cycle_Num': PDResults['CycleNum'],
+                                'PlasticStrn': PDResults['PlasticStrn']})
+
+    # Now writing them in two different sheets, as well as one more sheet for cycle information details.
+    with pd.ExcelWriter(ExcelFileName, engine='openpyxl') as writer:
+        SeqInfo_US.to_excel(writer, sheet_name='Seq_Info_US', index=False)
+        SeqInfo_SI.to_excel(writer, sheet_name='Seq_Info_SI', index=False)
+        CycleInfo.to_excel(writer, sheet_name='Cycle_Info', index=False)
+        PlasticStrn.to_excel(writer, sheet_name='Plastic_Strain', index=False)
 
     # Now, modifying the sequence information sheets and provide the formulas in the cells.
     Workbook = openpyxl.load_workbook(ExcelFileName)            # Read the excel file with OpenPyXL module.
